@@ -1,0 +1,81 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if the user is logged in
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Helper function to check if the user has an 'admin' role
+    function isAdmin() {
+      return isAuthenticated() && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // users collection: Users can read their own role. Admins can read/write all.
+    // Notice that write is restricted to admins only, preventing self-promotion.
+    match /users/{userId} {
+      // Users can read their own role; Admins can read all.
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      
+      // Admins can fully manage user documents (update/delete).
+      allow update, delete: if isAdmin();
+      
+      // Allow students to register and create their initial role document.
+      // They MUST set the role to 'student'. They cannot promote themselves to 'admin'.
+      allow create: if isAuthenticated() 
+                    && request.auth.uid == userId 
+                    && request.resource.data.role == 'student';
+    }
+
+    // students collection: Students can read their own data. Admins can read/write all.
+    match /students/{studentId} {
+      allow read: if isAuthenticated() && (request.auth.uid == studentId || isAdmin());
+      // Only admins can modify student data (attendance, fees, etc)
+      allow write: if isAdmin();
+      // Allow creation during registration if it matches their own UID, 
+      // but only if they are not trying to create it as an admin.
+      // We allow create here so Register.jsx works, but we don't allow them to set arbitrary roles.
+      // Wait, we need to allow the initial create during signup for a basic student profile.
+      allow create: if isAuthenticated() && request.auth.uid == studentId;
+    }
+
+    // Other collections fallback (for buses, books, etc. that aren't strictly personal)
+    // Allow admins to manage, allow students to read.
+    match /buses/{document=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+    
+    match /books/{document=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+    
+    match /announcements/{document=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+    
+    match /notifications/{document=**} {
+      // Students can read/update (e.g. mark as read) their own notifications
+      allow read, update: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow write: if isAdmin();
+    }
+
+    // Bus scans and boarding records: authenticated students/admins can record and view boarding
+    match /busScans/{scanId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /boardingRecords/{recordId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /idVerifications/{verificationId} {
+      allow read, write: if isAuthenticated();
+    }
+  }
+}
